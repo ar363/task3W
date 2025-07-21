@@ -12,7 +12,13 @@ const initialUsers = [
   { name: 'Raj', totalPoints: 0 },
   { name: 'Pooja', totalPoints: 0 },
   { name: 'Vikram', totalPoints: 0 },
-  { name: 'Anita', totalPoints: 0 }
+  { name: 'Anita', totalPoints: 0 },
+  { name: 'Suresh', totalPoints: 0 },
+  { name: 'Meera', totalPoints: 0 },
+  { name: 'Ravi', totalPoints: 0 },
+  { name: 'Sita', totalPoints: 0 },
+  { name: 'Gopal', totalPoints: 0 },
+  { name: 'Lakshmi', totalPoints: 0 }
 ];
 
 const seedUsers = async () => {

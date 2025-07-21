@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const ClaimHistory = require('../models/ClaimHistory');
+const { triggerLeaderboardUpdate, triggerClaimUpdate } = require('../utils/pusher');
 
 /**
  * POST /api/claims/claim-points
@@ -66,19 +67,23 @@ router.post('/claim-points', async (req, res) => {
 
     await claimHistory.save();
 
-    // Emit real-time updates via Socket.IO
-    const io = req.app.get('socketio');
-    io.emit('pointsClaimed', {
-      user: updatedUser,
-      pointsAwarded,
-      previousPoints,
-      newPoints: user.totalPoints,
-      previousRank,
-      newRank,
-      allUsers: updatedUsers
-    });
-
-    io.emit('rankingsUpdated', updatedUsers);
+    // Trigger Pusher updates instead of Socket.IO
+    try {
+      await triggerLeaderboardUpdate(updatedUsers);
+      
+      const claimUpdateData = {
+        _id: claimHistory._id,
+        userId: user._id,
+        userName: user.name,
+        pointsAwarded,
+        timestamp: claimHistory.claimTimestamp,
+        totalPointsAfter: user.totalPoints
+      };
+      
+      await triggerClaimUpdate(claimUpdateData);
+    } catch (pusherError) {
+      console.error('Pusher error:', pusherError);
+    }
 
     res.json({
       success: true,
@@ -92,6 +97,100 @@ router.post('/claim-points', async (req, res) => {
         claimHistory: claimHistory._id
       },
       message: `🎉 ${user.name} earned ${pointsAwarded} points!`
+    });
+
+  } catch (error) {
+    console.error('Error claiming points:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to claim points',
+      error: error.message
+    });
+  }
+});
+
+/**
+ * POST /api/claims
+ * Simple endpoint for claiming points (for frontend)
+ */
+router.post('/', async (req, res) => {
+  try {
+    const { userId, pointsAwarded } = req.body;
+
+    if (!userId || !pointsAwarded) {
+      return res.status(400).json({
+        success: false,
+        message: 'User ID and points awarded are required'
+      });
+    }
+
+    // Find the user
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'User not found'
+      });
+    }
+
+    // Store previous values for history
+    const previousPoints = user.totalPoints;
+
+    // Update user's total points
+    user.totalPoints += pointsAwarded;
+    await user.save();
+
+    // Recalculate all user rankings
+    const allUsers = await User.find({}).sort({ totalPoints: -1, createdAt: 1 });
+    const updatedUsers = [];
+    
+    for (let i = 0; i < allUsers.length; i++) {
+      allUsers[i].rank = i + 1;
+      await allUsers[i].save();
+      updatedUsers.push(allUsers[i]);
+    }
+
+    // Create claim history entry
+    const claimHistory = new ClaimHistory({
+      userId: user._id,
+      userName: user.name,
+      pointsAwarded,
+      previousPoints,
+      newPoints: user.totalPoints,
+      previousRank: 0,
+      newRank: user.rank,
+      claimTimestamp: new Date()
+    });
+
+    await claimHistory.save();
+
+    // Trigger Pusher updates
+    try {
+      await triggerLeaderboardUpdate(updatedUsers);
+      
+      const claimUpdateData = {
+        _id: claimHistory._id,
+        userId: user._id,
+        userName: user.name,
+        pointsAwarded,
+        timestamp: claimHistory.claimTimestamp,
+        totalPointsAfter: user.totalPoints
+      };
+      
+      await triggerClaimUpdate(claimUpdateData);
+    } catch (pusherError) {
+      console.error('Pusher error:', pusherError);
+    }
+
+    res.json({
+      success: true,
+      data: {
+        user: user,
+        pointsAwarded,
+        totalPoints: user.totalPoints,
+        claimHistory: claimHistory._id
+      },
+      message: `Successfully awarded ${pointsAwarded} points to ${user.name}!`
     });
 
   } catch (error) {
