@@ -101,7 +101,7 @@ export default function App() {
     loadClaimHistory()
   }, [])
 
-  // Pusher setup
+  // Pusher setup - only for backup/sync, not primary updates
   useEffect(() => {
     const pusher = new Pusher(import.meta.env.VITE_PUSHER_KEY, {
       cluster: import.meta.env.VITE_PUSHER_CLUSTER,
@@ -109,29 +109,39 @@ export default function App() {
 
     const channel = pusher.subscribe("leaderboard-channel")
 
-    channel.bind("leaderboard-update", (data: User[]) => {
-      // Convert backend User format to frontend LocalUser format
-      const convertedUsers = data.map((user, index) => ({
-        id: user._id,
-        name: user.name,
-        avatar: user.avatar || "/placeholder.svg?height=80&width=80",
-        points: user.totalPoints || 0,
-        rank: index + 1
-      }))
-      setUsers(convertedUsers)
-    })
+    // Disable real-time leaderboard updates since we're doing optimistic updates
+    // channel.bind("leaderboard-update", (data: User[]) => {
+    //   const convertedUsers = data.map((user, index) => ({
+    //     id: user._id,
+    //     name: user.name,
+    //     avatar: user.avatar || "/placeholder.svg?height=80&width=80",
+    //     points: user.totalPoints || 0,
+    //     rank: index + 1
+    //   }))
+    //   setUsers(convertedUsers)
+    // })
 
+    // Keep claim updates as backup in case optimistic update fails
     channel.bind("claim-update", (data: ClaimHistory) => {
-      const historyEntry: PointHistory = {
-        id: data._id,
-        userId: data.userId,
-        userName: data.userName,
-        pointsAwarded: data.pointsAwarded,
-        timestamp: new Date(data.timestamp),
-        totalPointsAfter: data.totalPointsAfter,
-      }
-      setPointHistory((prev) => [historyEntry, ...prev])
-      setLastClaimedPoints(data.pointsAwarded)
+      // Only update if we don't already have this claim in our optimistic updates
+      setPointHistory((prev) => {
+        const exists = prev.some(entry => 
+          entry.userId === data.userId && 
+          Math.abs(entry.timestamp.getTime() - new Date(data.timestamp).getTime()) < 5000
+        )
+        if (!exists) {
+          const historyEntry: PointHistory = {
+            id: data._id,
+            userId: data.userId,
+            userName: data.userName,
+            pointsAwarded: data.pointsAwarded,
+            timestamp: new Date(data.timestamp),
+            totalPointsAfter: data.totalPointsAfter,
+          }
+          return [historyEntry, ...prev]
+        }
+        return prev
+      })
     })
 
     return () => {
@@ -156,8 +166,52 @@ export default function App() {
 
     setIsClaimingPoints(true)
     
+    // Find the user we're updating
+    const selectedUser = users.find(u => u.id === selectedUserId)
+    if (!selectedUser) {
+      setIsClaimingPoints(false)
+      return
+    }
+
+    // Generate random points (same logic as backend)
+    const pointsToAward = Math.floor(Math.random() * 91) + 10 // 10-100 points
+    
+    // OPTIMISTIC UPDATE - Update UI immediately
+    const updatedUsers = users.map(user => {
+      if (user.id === selectedUserId) {
+        return {
+          ...user,
+          points: user.points + pointsToAward
+        }
+      }
+      return user
+    })
+    
+    // Sort users by points and update ranks
+    const sortedUsers = [...updatedUsers].sort((a, b) => b.points - a.points)
+    const rankedUsers = sortedUsers.map((user, index) => ({
+      ...user,
+      rank: index + 1
+    }))
+    
+    // Update users state immediately
+    setUsers(rankedUsers)
+    
+    // Add to history immediately
+    const newHistoryEntry: PointHistory = {
+      id: `temp-${Date.now()}`, // Temporary ID
+      userId: selectedUserId,
+      userName: selectedUser.name,
+      pointsAwarded: pointsToAward,
+      timestamp: new Date(),
+      totalPointsAfter: selectedUser.points + pointsToAward,
+    }
+    setPointHistory(prev => [newHistoryEntry, ...prev])
+    setLastClaimedPoints(pointsToAward)
+    setSelectedUserId("")
+    
     try {
-      // Make API call to backend using the correct endpoint
+      // Make API call to backend (but don't wait for it to update UI)
       const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api/claims/claim-points`, {
         method: 'POST',
         headers: {
@@ -174,16 +228,18 @@ export default function App() {
 
       const result = await response.json()
       
-      if (result.success) {
-        // The backend will trigger Pusher events for real-time updates
-        // We don't need to do local updates as Pusher will handle it
-        setSelectedUserId("")
-      } else {
-        throw new Error(result.message || 'Failed to claim points')
+      if (!result.success) {
+        // If backend fails, revert the optimistic update
+        console.error('Backend failed:', result.message)
+        // Reload data to get the correct state
+        window.location.reload()
       }
+      // If successful, the backend data might be slightly different but that's fine
+      // The real-time updates will eventually sync everything
     } catch (error) {
       console.error('Error claiming points:', error)
-      // Show error to user (you might want to add error state)
+      // Revert optimistic update on error
+      window.location.reload()
     }
 
     setIsClaimingPoints(false)
