@@ -8,11 +8,11 @@ const pusher = new Pusher({
   useTLS: true
 });
 
-const triggerLeaderboardUpdate = async (users) => {
+const triggerLeaderboardUpdate = async (users: any) => {
   await pusher.trigger("leaderboard-channel", "leaderboard-update", users);
 };
 
-const triggerClaimUpdate = async (claim) => {
+const triggerClaimUpdate = async (claim: any) => {
   await pusher.trigger("leaderboard-channel", "claim-update", claim);
 };
 
