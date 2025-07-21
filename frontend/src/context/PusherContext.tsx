@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useEffect, useState } from "react";
 import Pusher from "pusher-js";
-import { User, ClaimHistory } from "@/types";
+import type { User, ClaimHistory } from "@/types";
 
 interface PusherContextType {
   leaderboardUpdates?: User[];

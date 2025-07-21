@@ -55,7 +55,7 @@ export const ClaimHistoryList = () => {
             <div>
               <span className="font-medium">{claim.userName}</span>
               <span className="text-gray-500 ml-2">claimed</span>
-              <span className="font-medium ml-2">{claim.points} points</span>
+              <span className="font-medium ml-2">{claim.pointsAwarded} points</span>
             </div>
             <span className="text-sm text-gray-500">
               {new Date(claim.timestamp).toLocaleString()}
